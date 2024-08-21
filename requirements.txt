@@ -2,3 +2,4 @@ fastapi
 aiohttp
 motor
 pydantic
+uvicorn
