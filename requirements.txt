@@ -1,0 +1,4 @@
+fastapi
+aiohttp
+motor
+pydantic
