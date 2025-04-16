@@ -4,14 +4,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 import aiohttp
 import datetime
+import os
 from pydantic import BaseModel
 
 app = FastAPI()
 
-uri = 'mongodb+srv://juliphyy:l7jOBx88bEV9kvw5@cluster0.vpa0axs.mongodb.net/?retryWrites=true&w=majority'
+uri = os.environ.get("MONGO_URI")
 client = AsyncIOMotorClient(uri)
 db = client['magicdocs']
-API_KEY = "d2f5768f8798f57a63d32ddd6a4e9f8e"
+API_KEY = os.environ.get('API_KEY')
 
 app.add_middleware(
     CORSMiddleware,
