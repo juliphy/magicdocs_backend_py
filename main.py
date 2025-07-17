@@ -1,18 +1,26 @@
-from fastapi import FastAPI, Request, HTTPException, status
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 import aiohttp
-import datetime
 import os
 from pydantic import BaseModel
+import asyncio
 
 app = FastAPI()
 
-uri = os.environ.get("MONGO_URI")
-client = AsyncIOMotorClient(uri)
-db = client['magicdocs']
-API_KEY = os.environ.get('API_KEY')
+
+@app.on_event("startup")
+async def startup_event() -> None:
+    uri = os.environ.get("MONGO_URI")
+    app.state.client = AsyncIOMotorClient(uri)
+    app.state.db = app.state.client["magicdocs"]
+    app.state.api_key = os.environ.get("API_KEY")
+
+
+@app.on_event("shutdown")
+async def shutdown_event() -> None:
+    app.state.client.close()
 
 app.add_middleware(
     CORSMiddleware,
@@ -25,37 +33,40 @@ app.add_middleware(
 class ImageData(BaseModel):
     image: str
 
+
+async def fetch_data_item(item_id: str) -> dict:
+    collection = app.state.db["data"]
+    document = await collection.find_one({"id": item_id})
+    if not document:
+        raise HTTPException(status_code=404, detail="Item not found")
+    return document
+
 @app.get("/page")
 async def get_page(id: str):
-    collection = db['data']
-    result = await collection.find_one({"id": id})
-    if not result:
-        raise HTTPException(status_code=404, detail="Item not found")
-    
-    del result["_id"]
-    result['status']["unlimit_end"] = None
-    return JSONResponse(content=result, status_code = 200)
+    result = await fetch_data_item(id)
+    result.pop("_id", None)
+    result["status"]["unlimit_end"] = None
+    return JSONResponse(content=result, status_code=200)
 
 
 @app.get("/exist")
 async def check_existence(id: str):
-    collection = db['data']
-    result = await collection.find_one({"id": id})
-    if not result:
-        raise HTTPException(status_code=404, detail="Item not found")
+    await fetch_data_item(id)
     return JSONResponse(content="Found", status_code=200)
 
 @app.get("/login")
 async def login(id: str):
-    collection = db['data']
-    settings = db['settings']
-    result = await collection.find_one({"id": id})
-    settings_result = await settings.find_one({})
+    collection = app.state.db["data"]
+    settings = app.state.db["settings"]
+    result, settings_result = await asyncio.gather(
+        collection.find_one({"id": id}),
+        settings.find_one({})
+    )
     if not result or not settings_result:
         raise HTTPException(status_code=404, detail="Item not found")
     return {
-        "isAdmin": result['status']['isAdmin'],
-        "isLoginAllowed": settings_result['allowLogin']
+        "isAdmin": result["status"]["isAdmin"],
+        "isLoginAllowed": settings_result["allowLogin"],
     }
 
 @app.post("/sign")
@@ -65,7 +76,7 @@ async def sign(id: str, image_data: ImageData):
             form = aiohttp.FormData()
             form.add_field('image', image_data.image)
             async with session.post(
-                f'https://api.imgbb.com/1/upload?key={API_KEY}', 
+                f'https://api.imgbb.com/1/upload?key={app.state.api_key}',
                 data=form
             ) as response:
                 if response.status != 200:
@@ -73,7 +84,7 @@ async def sign(id: str, image_data: ImageData):
                 data = await response.json()
                 url = data['data']['url']
 
-        collection = db['data']
+        collection = app.state.db['data']
         result = await collection.update_one(
             {"id": id},
             {"$set": {"img.urlSign": url}}
